@@ -1,23 +1,21 @@
-# Prompt Platform — Prompt 工程管理平台
+# Prompt Platform
 
 A full-stack platform for managing LLM prompts as engineering assets: version control, regression testing, A/B experiments, multi-model playground, and review/publish workflow.
 
-一个将 LLM Prompt 视为工程资产进行全生命周期管理的全栈平台，提供版本控制、回归测试、A/B 实验、多模型调试和审核发布功能。
+---
+
+## Features
+
+- **Version Control** — Create, diff, rollback, and delete prompt versions. Diff visualization highlighting additions, deletions, and changes word-by-word.
+- **Regression Testing** — Define test suites with input/expected pairs. Run against any version + model combination via background worker. Poll results with pass rate and per-case output.
+- **Playground & Compare** — Execute a single version or compare two versions side-by-side against the same input, with latency and word-level diff.
+- **A/B Experiments** — Create and manage experiments between two versions with traffic split configuration.
+- **Multi-Provider** — Factory pattern routes model selection to OpenAI, DeepSeek, or Claude providers automatically.
+- **JWT Auth** — Register/login with dual-token (access + httpOnly refresh), route guards on frontend.
 
 ---
 
-## Features | 功能
-
-- **Version Control | 版本管理** — Create, diff, rollback, and delete prompt versions. Diff visualization highlighting additions, deletions, and changes word-by-word.
-- **Regression Testing | 回归测试** — Define test suites with input/expected pairs. Run against any version + model combination via background worker. Poll results with pass rate and per-case output.
-- **Playground & Compare | 即时调试与对比** — Execute a single version or compare two versions side-by-side against the same input, with latency and word-level diff.
-- **A/B Experiments | A/B 实验** — Create and manage experiments between two versions with traffic split configuration.
-- **Multi-Provider | 多模型支持** — Factory pattern routes model selection to OpenAI, DeepSeek, or Claude providers automatically.
-- **JWT Auth | 认证** — Register/login with dual-token (access + httpOnly refresh), route guards on frontend.
-
----
-
-## Tech Stack | 技术栈
+## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
@@ -31,7 +29,7 @@ A full-stack platform for managing LLM prompts as engineering assets: version co
 
 ---
 
-## Architecture | 架构
+## Architecture
 
 ```
 nginx (:80)
@@ -51,11 +49,9 @@ Router → Service → Repository → Model
 
 All responses follow a unified envelope: `{ success: bool, data: ..., error: string | null }`.
 
-所有 API 响应统一封装为 `{ success, data, error }` 格式。
-
 ---
 
-## Quick Start | 快速启动
+## Quick Start
 
 ```bash
 # 1. Clone
@@ -77,7 +73,7 @@ Services: `postgres`, `redis`, `backend` (:8000), `frontend` (Vite dev), `worker
 
 ---
 
-## Project Scale | 项目规模
+## Project Scale
 
 - **61** Python source files, **~3,400** lines (backend)
 - **9** Vue/JS source files, **~1,100** lines (frontend)
@@ -88,7 +84,7 @@ Services: `postgres`, `redis`, `backend` (:8000), `frontend` (Vite dev), `worker
 
 ---
 
-## Real Problems Solved | 解决的实际问题
+## Real Problems Solved
 
 ### 1. Foreign Key Cascade Deletion (3 locations)
 
@@ -124,7 +120,7 @@ Services: `postgres`, `redis`, `backend` (:8000), `frontend` (Vite dev), `worker
 
 **Problem**: Without a valid API key, the playground/compare features sent HTTP requests with `Authorization: Bearer None` to the LLM provider, then waited 60 seconds for httpx timeout before returning an error. The user perceived this as the app "freezing."
 
-**Fix**: Added explicit API key presence checks in `experiment_service.py` before creating the provider. For each model prefix (`deepseek`, `claude`, `openai`), validate the corresponding config key exists. If not, raise `ConflictError` with a clear Chinese error message immediately — no HTTP call is made.
+**Fix**: Added explicit API key presence checks in `experiment_service.py` before creating the provider. For each model prefix (`deepseek`, `claude`, `openai`), validate the corresponding config key exists. If not, raise `ConflictError` immediately — no HTTP call is made.
 
 ### 5. Worker Input Rendering Bug
 
@@ -150,10 +146,10 @@ Services: `postgres`, `redis`, `backend` (:8000), `frontend` (Vite dev), `worker
 
 ---
 
-## Key Design Decisions | 关键设计决策
+## Key Design Decisions
 
-- **Repository pattern**: All data access through repositories inheriting `BaseRepository` (standard CRUD + pagination). Service layer never writes raw SQL except for cascade deletes.
-- **PromptAccessMixin**: Permission check reused across 5 services. Verifies the user is a project member (owner/editor/viewer) via one method call.
+- **Repository pattern**: All data access through repositories inheriting `BaseRepository`. Service layer never writes raw SQL except for cascade deletes.
+- **PromptAccessMixin**: Permission check reused across 5 services. Verifies the user is a project member via one method call.
 - **Immutable operations**: Services always return new objects; never mutate input parameters in place.
 - **Unified response envelope**: `{ success, data, error }` on every endpoint. Frontend error handling is a single branch.
 
