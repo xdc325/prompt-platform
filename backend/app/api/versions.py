@@ -59,9 +59,9 @@ async def create_version(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new draft version with auto-incremented version number."""
+    """Create a new draft version. Pass parent_version_id to specify base version."""
     svc = VersionService(db)
-    version = await svc.create_draft(prompt_id, uuid.UUID(user_id), body.content, body.variables, body.changelog)
+    version = await svc.create_draft(prompt_id, uuid.UUID(user_id), body.content, body.variables, body.changelog, body.parent_version_id)
     return {"success": True, "data": _version_response(version), "error": None}
 
 

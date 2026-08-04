@@ -9,6 +9,7 @@ class VersionCreate(BaseSchema):
     content: str = Field(min_length=1)
     variables: list[str] = []
     changelog: str | None = None
+    parent_version_id: str | None = None
 
 
 class VersionResponse(BaseSchema):

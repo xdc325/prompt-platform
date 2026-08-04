@@ -1,4 +1,5 @@
 import difflib
+import re
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,16 +46,31 @@ class VersionService(PromptAccessMixin):
         await self._check_prompt_access(version.prompt_id, user_id)
         return version
 
-    async def create_draft(self, prompt_id: uuid.UUID, user_id: uuid.UUID, content: str, variables: list[str], changelog: str | None) -> PromptVersion:
-        """Create a new draft version with auto-incremented version number.
+    async def create_draft(self, prompt_id: uuid.UUID, user_id: uuid.UUID, content: str, variables: list[str], changelog: str | None, parent_version_id: str | None = None) -> PromptVersion:
+        """Create a new draft version.
 
-        Sets the parent_version_id to the prompt's current version for lineage tracking.
+        parent_version_id: user-selected base version (None = use current version, "" = blank).
+        Variables are auto-extracted from content if not explicitly provided.
         """
         await self._check_prompt_access(prompt_id, user_id)
 
         prompt = await self.prompt_repo.find_by_id(prompt_id)
         version_number = await self.version_repo.get_next_version_number(prompt_id)
+
+        # Determine parent version
         parent_id = prompt.current_version_id
+        if parent_version_id is not None:
+            if parent_version_id == "":
+                parent_id = None  # User chose blank
+            else:
+                pv = await self.version_repo.find_by_id(uuid.UUID(parent_version_id))
+                if not pv or str(pv.prompt_id) != str(prompt_id):
+                    raise NotFoundError("Parent version", parent_version_id)
+                parent_id = pv.id
+
+        # Auto-extract variables from content
+        if not variables:
+            variables = list(set(re.findall(r'\{(\w+)\}', content)))
 
         version = PromptVersion(
             prompt_id=prompt_id,

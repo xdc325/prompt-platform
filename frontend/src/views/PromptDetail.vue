@@ -12,10 +12,20 @@
         <button @click="showCreate = true" class="new-btn">+ 新建版本</button>
 
         <div v-if="showCreate" class="form">
-          <textarea v-model="newContent" placeholder="提示词内容，用 {{变量名}} 做占位符" rows="8"></textarea>
+          <select v-model="newParentId" @change="onBaseVersionSelected" class="base-select">
+            <option value="">空白新建（不基于任何版本）</option>
+            <option v-for="v in versions" :key="v.id" :value="v.id">
+              v{{ v.version_number }} ({{ statusLabel(v.status) }})
+            </option>
+          </select>
+          <select v-model="newTemplate" @change="onTemplateSelected" class="base-select">
+            <option value="">自定义（自由编写）</option>
+            <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
+          </select>
+          <textarea v-model="newContent" placeholder="提示词内容，用 {变量名} 做占位符" rows="8"></textarea>
           <input v-model="newChangelog" placeholder="变更说明（可选）" />
           <button @click="createVersion" :disabled="creating">创建草稿</button>
-          <button @click="showCreate = false" class="cancel">取消</button>
+          <button @click="cancelCreate" class="cancel">取消</button>
         </div>
 
         <div v-if="diffSelection.length === 1" class="diff-hint">
@@ -221,6 +231,16 @@ const playgroundResult = ref(null)
 const showCreate = ref(false)
 const newContent = ref('')
 const newChangelog = ref('')
+const newParentId = ref('')
+const newTemplate = ref('')
+
+const templates = [
+  { id: 'qa', name: '简单问答', content: '{question}' },
+  { id: 'rag', name: '上下文问答（RAG）', content: '根据以下信息回答问题：\n\n---\n{context}\n---\n\n问题：{question}' },
+  { id: 'classify', name: '文本分类', content: '请对以下文本进行「{labels}」分类，只返回分类结果，不要解释。\n\n文本：{text}' },
+  { id: 'summary', name: '文本摘要', content: '请将以下内容总结为{format}，保留关键信息，不要添加原文没有的内容。\n\n原文：\n{text}' },
+  { id: 'code', name: '代码生成', content: '用 {language} 实现以下需求。只输出代码，不要解释。\n\n{requirement}' },
+]
 
 const diffSelection = ref([])
 const expandedVersions = reactive(new Set())
@@ -253,6 +273,34 @@ function statusLabel(status) {
   return map[status] || status
 }
 
+function onBaseVersionSelected() {
+  if (!newParentId.value) {
+    newContent.value = ''
+    return
+  }
+  newTemplate.value = ''
+  const base = versions.value.find(v => v.id === newParentId.value)
+  if (base) newContent.value = base.content
+}
+
+function onTemplateSelected() {
+  if (!newTemplate.value) {
+    newContent.value = ''
+    return
+  }
+  newParentId.value = ''
+  const t = templates.find(t => t.id === newTemplate.value)
+  if (t) newContent.value = t.content
+}
+
+function cancelCreate() {
+  showCreate.value = false
+  newContent.value = ''
+  newChangelog.value = ''
+  newParentId.value = ''
+  newTemplate.value = ''
+}
+
 onMounted(async () => {
   try {
     prompt.value = await api.getPrompt(promptId)
@@ -277,10 +325,11 @@ onMounted(async () => {
 async function createVersion() {
   creating.value = true
   try {
-    await api.createVersion(promptId, { content: newContent.value, variables: [], changelog: newChangelog.value || null })
+    await api.createVersion(promptId, { content: newContent.value, variables: [], changelog: newChangelog.value || null, parent_version_id: newParentId.value || null })
     showCreate.value = false
     newContent.value = ''
     newChangelog.value = ''
+    newParentId.value = ''
     const data = await api.listVersions(promptId)
     versions.value = data.items
     toast.success('草稿创建成功')
@@ -488,6 +537,7 @@ h1 { color: #1a1a2e; margin-bottom: 8px; }
 .form button { padding: 8px 16px; background: #2ecc71; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 8px; }
 .form button:disabled { opacity: 0.6; cursor: not-allowed; }
 .form button.cancel { background: #999; }
+.base-select { display: block; width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 4px; font-family: inherit; font-size: 14px; background: white; }
 .diff-hint {
   background: #eef6ff; border: 1px solid #3498db; border-radius: 6px;
   padding: 10px 16px; margin: 12px 0; color: #2c3e50; font-size: 14px;
