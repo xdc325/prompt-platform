@@ -183,8 +183,24 @@
       </section>
 
       <section v-if="showPlayground" class="playground">
-        <h2>即时测试 — v{{ playgroundVersion?.version_number }}</h2>
+        <div class="playground-header">
+          <h2>即时测试 — v{{ playgroundVersion?.version_number }}</h2>
+          <label class="compare-toggle">
+            <input type="checkbox" v-model="compareMode" @change="onCompareModeChange" />
+            对比模式
+          </label>
+        </div>
         <div class="playground-form">
+          <div v-if="compareMode" class="compare-versions">
+            <select v-model="playgroundVersionId">
+              <option v-for="v in versions" :key="v.id" :value="v.id">v{{ v.version_number }} ({{ statusLabel(v.status) }})</option>
+            </select>
+            <span class="vs-label">vs</span>
+            <select v-model="compareVersionBId">
+              <option :value="null">选择版本B...</option>
+              <option v-for="v in versions" :key="v.id" :value="v.id" :disabled="v.id === playgroundVersionId">v{{ v.version_number }} ({{ statusLabel(v.status) }})</option>
+            </select>
+          </div>
           <textarea v-model="playgroundInput" placeholder="输入测试内容..." rows="4"></textarea>
           <select v-model="playgroundModel">
             <optgroup label="OpenAI">
@@ -197,14 +213,44 @@
               <option value="deepseek-coder">DeepSeek Coder</option>
             </optgroup>
           </select>
-          <button @click="runPlayground" :disabled="playing">
+          <button v-if="!compareMode" @click="runPlayground" :disabled="playing">
             {{ playing ? '运行中...' : '运行' }}
           </button>
-          <button @click="showPlayground = false" class="cancel">关闭</button>
+          <button v-if="compareMode" @click="runCompare" :disabled="playing || !compareVersionBId">
+            {{ playing ? '运行中...' : '对比运行' }}
+          </button>
+          <button @click="closePlayground" class="cancel">关闭</button>
         </div>
-        <div v-if="playgroundResult" class="playground-result">
+
+        <!-- 单版本结果 -->
+        <div v-if="playgroundResult && !compareMode" class="playground-result">
           <h3>输出结果</h3>
           <pre>{{ playgroundResult.output }}</pre>
+        </div>
+
+        <!-- 对比结果 -->
+        <div v-if="compareResult" class="compare-results">
+          <div class="compare-columns">
+            <div class="compare-col">
+              <h3>{{ compareResult.results[0].version }}</h3>
+              <div class="compare-meta">延迟：{{ compareResult.results[0].latency_ms }}ms</div>
+              <pre>{{ compareResult.results[0].output }}</pre>
+            </div>
+            <div class="compare-col">
+              <h3>{{ compareResult.results[1].version }}</h3>
+              <div class="compare-meta">延迟：{{ compareResult.results[1].latency_ms }}ms</div>
+              <pre>{{ compareResult.results[1].output }}</pre>
+            </div>
+          </div>
+          <div class="compare-diff">
+            <h3>逐词差异</h3>
+            <div v-for="(d, i) in compareResult.output_diff" :key="i" class="diff-token" :class="d.type">
+              <template v-if="d.type === 'same'">{{ d.text }} </template>
+              <template v-if="d.type === 'changed'"><del>{{ d.a }}</del> <ins>{{ d.b }}</ins> </template>
+              <template v-if="d.type === 'removed'"><del>{{ d.a }}</del> </template>
+              <template v-if="d.type === 'added'"><ins>{{ d.b }}</ins> </template>
+            </div>
+          </div>
         </div>
       </section>
     </template>
@@ -246,8 +292,12 @@ const diffSelection = ref([])
 const expandedVersions = reactive(new Set())
 const showPlayground = ref(false)
 const playgroundVersion = ref(null)
+const playgroundVersionId = ref('')
 const playgroundInput = ref('')
 const playgroundModel = ref('gpt-3.5-turbo')
+const compareMode = ref(false)
+const compareVersionBId = ref(null)
+const compareResult = ref(null)
 
 const loading = reactive({ prompt: true, versions: true, suites: true })
 const creating = ref(false)
@@ -416,16 +466,50 @@ function toggleExpand(versionId) {
 function openPlayground(versionId) {
   const v = versions.value.find(x => x.id === versionId)
   playgroundVersion.value = v
+  playgroundVersionId.value = versionId
   playgroundInput.value = ''
   playgroundResult.value = null
+  compareMode.value = false
+  compareVersionBId.value = null
+  compareResult.value = null
   showPlayground.value = true
+}
+
+function onCompareModeChange() {
+  compareResult.value = null
+  playgroundResult.value = null
+  compareVersionBId.value = null
+}
+
+function closePlayground() {
+  showPlayground.value = false
+  compareMode.value = false
+  compareVersionBId.value = null
+  compareResult.value = null
+  playgroundResult.value = null
 }
 
 async function runPlayground() {
   playing.value = true
   try {
     playgroundResult.value = await api.playground(promptId, {
-      version_id: playgroundVersion.value.id,
+      version_id: playgroundVersionId.value,
+      input: playgroundInput.value,
+      model: playgroundModel.value,
+    })
+  } catch (e) {
+    toast.error(e.message)
+  } finally {
+    playing.value = false
+  }
+}
+
+async function runCompare() {
+  playing.value = true
+  try {
+    compareResult.value = await api.compare(promptId, {
+      version_a_id: playgroundVersionId.value,
+      version_b_id: compareVersionBId.value,
       input: playgroundInput.value,
       model: playgroundModel.value,
     })
@@ -589,6 +673,27 @@ h1 { color: #1a1a2e; margin-bottom: 8px; }
 .playground-result { margin-top: 16px; }
 .playground-result h3 { font-size: 14px; color: #666; margin-bottom: 8px; }
 .playground-result pre { background: #f8f9fa; padding: 16px; border-radius: 8px; white-space: pre-wrap; }
+.playground-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.playground-header h2 { margin: 0; }
+.compare-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #555; cursor: pointer; }
+.compare-toggle input { margin: 0; }
+.compare-versions { display: flex; align-items: center; gap: 8px; }
+.compare-versions select { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: inherit; font-size: 14px; }
+.vs-label { font-weight: bold; color: #999; font-size: 14px; }
+.compare-results { margin-top: 16px; }
+.compare-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.compare-col { background: #f8f9fa; padding: 12px; border-radius: 8px; }
+.compare-col h3 { font-size: 14px; color: #1a1a2e; margin-bottom: 4px; }
+.compare-meta { font-size: 12px; color: #999; margin-bottom: 8px; }
+.compare-col pre { white-space: pre-wrap; font-size: 13px; font-family: monospace; }
+.compare-diff { background: #fafafa; padding: 12px; border-radius: 8px; border: 1px solid #e0e0e0; }
+.compare-diff h3 { font-size: 14px; color: #666; margin-bottom: 8px; }
+.diff-token.same { color: #333; }
+.diff-token.changed { background: #fff3cd; }
+.diff-token.removed { background: #f8d7da; }
+.diff-token.added { background: #d4edda; }
+.diff-token del { color: #c0392b; text-decoration: line-through; }
+.diff-token ins { color: #27ae60; text-decoration: none; }
 .error-state { text-align: center; color: #e74c3c; padding: 48px; }
 
 /* Test Suites */

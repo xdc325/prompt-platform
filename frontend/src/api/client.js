@@ -51,4 +51,5 @@ export const api = {
 
   // Playground
   playground: (promptId, body) => request('POST', `/prompts/${promptId}/playground`, body),
+  compare: (promptId, body) => request('POST', `/prompts/${promptId}/compare`, body),
 }
