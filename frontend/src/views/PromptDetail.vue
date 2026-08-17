@@ -150,7 +150,10 @@
             </div>
             <div v-if="testRunResult && testRunResult.suiteId === s.id" class="test-run-result">
               <h4>测试结果</h4>
-              <div v-if="testRunResult.loading" class="loading">等待结果...</div>
+              <div v-if="testRunResult.loading" class="loading">
+                实时进度（SSE）：{{ testRunResult.live?.passed || 0 }}/{{ testRunResult.live?.total || 0 }} 个用例完成...
+              </div>
+              <div v-else-if="testRunResult.error" class="loading">{{ testRunResult.error }}</div>
               <template v-else>
                 <div class="result-summary">
                   通过率：{{ (testRunResult.pass_rate * 100).toFixed(0) }}%
@@ -578,33 +581,73 @@ async function confirmDeleteSuite(suiteId) {
 async function runTestSuite(suiteId) {
   if (!runVersionId.value) return
   runningSuite.value = suiteId
-  testRunResult.value = { suiteId, loading: true }
+  testRunResult.value = { suiteId, loading: true, live: { passed: 0, total: 0 } }
   try {
     // Enqueue the test run
     const run = await api.runTest(promptId, suiteId, runVersionId.value, runModel.value)
-    // Poll for results (worker processes in background)
-    for (let i = 0; i < 30; i++) {
-      await new Promise(r => setTimeout(r, 1000))
-      const result = await api.getTestRun(run.id)
-      if (result.status === 'completed' || result.status === 'failed') {
-        testRunResult.value = {
-          suiteId,
-          loading: false,
-          pass_rate: result.pass_rate,
-          passed: result.results?.filter(r => r.passed).length || 0,
-          total: result.results?.length || 0,
-          results: result.results || [],
-        }
-        return
-      }
-    }
-    testRunResult.value = { suiteId, loading: false, error: '测试超时，请稍后刷新查看结果' }
+    await streamTestRun(run.id, suiteId)
   } catch (e) {
     toast.error(e.message)
     testRunResult.value = null
   } finally {
     runningSuite.value = null
   }
+}
+
+// 通过 SSE 订阅回归测试进度，结束时拉取完整结果渲染
+function streamTestRun(runId, suiteId) {
+  return new Promise((resolve) => {
+    const es = new EventSource(api.testRunStreamUrl(runId))
+
+    // 兜底超时：worker 长时间无结果时给出提示（worker 正常每用例会推 case_result）
+    const timeoutId = setTimeout(() => {
+      es.close()
+      testRunResult.value = { suiteId, loading: false, error: '测试超时，请稍后刷新查看结果' }
+      resolve()
+    }, 5 * 60 * 1000)
+
+    const loadFinal = (fallbackError) => {
+      clearTimeout(timeoutId)
+      es.close()
+      api.getTestRun(runId).then((result) => {
+        if (result.status === 'running') {
+          // SSE 中断但任务还在跑：给出提示而不是展示空结果
+          testRunResult.value = { suiteId, loading: false, error: fallbackError }
+        } else {
+          testRunResult.value = {
+            suiteId,
+            loading: false,
+            pass_rate: result.pass_rate,
+            passed: result.results?.filter(r => r.passed).length || 0,
+            total: result.results?.length || 0,
+            results: result.results || [],
+          }
+        }
+        resolve()
+      }).catch((err) => {
+        testRunResult.value = { suiteId, loading: false, error: fallbackError || err.message }
+        resolve()
+      })
+    }
+
+    es.addEventListener('case_result', (ev) => {
+      try {
+        const data = JSON.parse(ev.data)
+        if (testRunResult.value?.suiteId !== suiteId) return
+        const live = testRunResult.value.live || { passed: 0, total: 0 }
+        testRunResult.value = {
+          ...testRunResult.value,
+          live: {
+            total: (data.case_index ?? live.total - 1) + 1,
+            passed: live.passed + (data.passed ? 1 : 0),
+          },
+        }
+      } catch (err) { /* 忽略单条事件解析失败 */ }
+    })
+
+    es.addEventListener('complete', () => loadFinal('SSE 连接中断，请刷新后查看结果'))
+    es.onerror = () => loadFinal('SSE 连接中断，请刷新后查看结果')
+  })
 }
 </script>
 

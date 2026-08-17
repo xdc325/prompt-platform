@@ -48,6 +48,11 @@ export const api = {
   deleteTestSuite: (promptId, suiteId) => request('DELETE', `/prompts/${promptId}/test-suites/${suiteId}`),
   runTest: (promptId, suiteId, versionId, model = 'deepseek-chat') => request('POST', `/prompts/${promptId}/test-suites/${suiteId}/run`, { version_id: versionId, model }),
   getTestRun: (runId) => request('GET', `/test-runs/${runId}`),
+  // EventSource 无法携带 Authorization header，通过 query 参数传 access_token
+  testRunStreamUrl: (runId) => {
+    const token = localStorage.getItem('access_token') || ''
+    return `/api/v1/test-runs/${runId}/stream?access_token=${encodeURIComponent(token)}`
+  },
 
   // Playground
   playground: (promptId, body) => request('POST', `/prompts/${promptId}/playground`, body),

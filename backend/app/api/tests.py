@@ -3,12 +3,13 @@ import json
 import uuid
 
 from arq import ArqRedis
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import get_arq, get_current_user_id, get_db
+from app.core.security import decode_token
 from app.models.base import async_session_factory
 from app.repositories.test_run_repo import TestRunRepository
 from app.schemas.test import TestSuiteCreate, TestSuiteResponse, TestSuiteUpdate, TestRunRequest, TestRunResponse
@@ -122,20 +123,43 @@ async def get_test_run(
 @router.get("/test-runs/{run_id}/stream")
 async def stream_test_run(
     run_id: uuid.UUID,
-    user_id: str = Depends(get_current_user_id),
+    request: Request,
+    access_token: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Stream test run progress as SSE events (case_result → ... → complete)."""
+    """Stream test run progress as SSE events (case_result → ... → complete).
+
+    Browsers' EventSource cannot set Authorization headers, so the endpoint
+    accepts the access token via ?access_token= query parameter as an
+    alternative to the Bearer header.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        user_id = await get_current_user_id(request)
+    elif access_token:
+        try:
+            payload = decode_token(access_token)
+            if payload.get("type") != "access":
+                raise ValueError("not an access token")
+            user_id = payload["sub"]
+        except ValueError:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+    else:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
     svc = TestService(db)
     await svc.get_run(run_id, uuid.UUID(user_id))
 
     async def event_generator():
+        # sent 索引保证每条 case 只推一次（原实现会重复推最新一条）
+        sent = 0
         while True:
             async with async_session_factory() as session:
                 repo = TestRunRepository(session)
                 current = await repo.find_by_id(run_id)
                 if not current or current.status in ("completed", "failed"):
                     data = {
+                        "status": current.status if current else "failed",
                         "pass_rate": current.pass_rate if current else 0,
                         "total_cases": len(current.results) if current and current.results else 0,
                         "passed": sum(1 for r in (current.results or []) if r.get("passed")),
@@ -144,9 +168,10 @@ async def stream_test_run(
                     yield {"event": "complete", "data": json.dumps(data)}
                     break
 
-                if current.results:
-                    latest = current.results[-1]
-                    yield {"event": "case_result", "data": json.dumps(latest)}
+                results = current.results or []
+                while sent < len(results):
+                    yield {"event": "case_result", "data": json.dumps(results[sent])}
+                    sent += 1
 
             await asyncio.sleep(0.5)
 
